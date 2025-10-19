@@ -282,18 +282,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - AI Models: PyTorch, Google Gemini API
 - Technologies: FastAPI, SQLAlchemy, Pandas, NumPy
 
-## 📧 Contact
 
-For questions or support:
-- Open an issue on GitHub
-- Check the documentation in the repository
-
----
-
-**Status**: ✅ Production Ready
-**Version**: 2.0 (ANN with Active Questioning)
-**Last Updated**: 2025-10-20
-
----
-
-Made with ❤️ for Vietnamese Healthcare
