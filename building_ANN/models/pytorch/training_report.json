@@ -1,0 +1,46 @@
+{
+  "model_info": {
+    "framework": "PyTorch",
+    "architecture": "ANN (377 -> 512 -> 256 -> 128 -> 577)",
+    "input_features": 377,
+    "output_classes": 577,
+    "total_parameters": 433985,
+    "note": "Trained on 577 common diseases (>10 samples each). 191 rare diseases excluded."
+  },
+  "training_config": {
+    "batch_size": 128,
+    "epochs_run": 92,
+    "optimizer": "Adam (lr=0.001)",
+    "loss_function": "CrossEntropyLoss (weighted)",
+    "class_weighted": true,
+    "random_seed": 42,
+    "device": "cpu"
+  },
+  "dataset_info": {
+    "training_samples": 132188,
+    "validation_samples": 28327,
+    "test_samples": 28327,
+    "total_samples": 188842,
+    "rare_diseases_excluded": 191
+  },
+  "best_epoch_metrics": {
+    "best_epoch": 77,
+    "train_loss": 0.34381899141228595,
+    "train_accuracy": 0.8348866765515781,
+    "val_loss": 0.4243586692814014,
+    "val_accuracy": 0.8374695520175098
+  },
+  "final_test_metrics": {
+    "test_loss": 0.4278631515188904,
+    "test_accuracy": 0.8321742507148657,
+    "test_top_3_accuracy": 0.9482119532601405,
+    "test_top_5_accuracy": 0.9750061778515198
+  },
+  "outputs": {
+    "model_file": "../models/pytorch/ann_disease_classifier_577.pth",
+    "best_model_file": "../models/pytorch/best_model.pth",
+    "label_encoder": "../models/pytorch/label_encoder.pkl",
+    "training_history": "../models/pytorch/training_history.csv",
+    "visualizations": "../models/pytorch/training_history_curves.png"
+  }
+}
