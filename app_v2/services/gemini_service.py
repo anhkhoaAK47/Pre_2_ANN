@@ -369,3 +369,94 @@ def call_gemini(user_message: str, state: Dict[str, str], off_topic_count: int =
                 time.sleep(0.5)
 
     raise RuntimeError(f"Gọi Gemini thất bại sau 5 lần: {last_err}")
+
+
+def generate_diverse_question(
+    symptom_name: str,
+    question_number: int = 1,
+    top_diseases: list = None,
+    timeout: float = 2.0
+) -> str:
+    """
+    Generate diverse, natural question for a symptom using Gemini API.
+    Used by Active Questioning Engine.
+
+    Args:
+        symptom_name: Vietnamese symptom name (e.g., "đau đầu")
+        question_number: Question number in the session (1-10)
+        top_diseases: List of top disease names for context (optional)
+        timeout: Timeout in seconds (default: 2.0)
+
+    Returns:
+        Natural language question string
+
+    Raises:
+        Exception: If Gemini API fails (caller should handle and fallback to template)
+    """
+    # Build context for more natural questions
+    context = f"Đây là câu hỏi số {question_number} trong cuộc khám."
+    if top_diseases and len(top_diseases) > 0:
+        context += f" Các bệnh có khả năng: {', '.join(top_diseases[:3])}."
+
+    prompt = f"""Bạn là bác sĩ đang hỏi bệnh nhân về triệu chứng.
+
+{context}
+
+Hãy tạo 1 câu hỏi TỰ NHIÊN, THÂN THIỆN để hỏi về triệu chứng: "{symptom_name}"
+
+YÊU CẦU:
+- CHỈ trả về câu hỏi (1 câu duy nhất)
+- Câu hỏi phải có thể trả lời Có/Không
+- Đa dạng về cách hỏi (không lặp lại mẫu)
+- Phù hợp ngữ cảnh y tế
+- KHÔNG giải thích, KHÔNG thêm gì khác
+
+VÍ DỤ các cách hỏi:
+- "Bạn có bị {symptom_name} không?"
+- "Gần đây bạn có cảm thấy {symptom_name} không?"
+- "Để tôi hỏi thêm, bạn có {symptom_name} không?"
+
+CHỈ TRẢ VỀ CÂU HỎI:"""
+
+    # Simple payload for question generation
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+
+    try:
+        # Make API call with timeout
+        response = requests.post(
+            API_URL,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=timeout
+        )
+        response.raise_for_status()
+
+        result = response.json()
+
+        # Extract question text
+        if "candidates" in result and len(result["candidates"]) > 0:
+            candidate = result["candidates"][0]
+            if "content" in candidate and "parts" in candidate["content"]:
+                question_text = candidate["content"]["parts"][0]["text"].strip()
+
+                # Clean up response (remove quotes, extra whitespace)
+                question_text = question_text.strip('"\'')
+
+                # Validate question (should end with ?)
+                if not question_text.endswith('?'):
+                    question_text += ' không?'
+
+                return question_text
+
+        raise ValueError("Invalid response format from Gemini")
+
+    except requests.exceptions.Timeout:
+        raise TimeoutError(f"Gemini API timeout after {timeout}s")
+    except requests.exceptions.RequestException as e:
+        if "429" in str(e):
+            raise Exception("Rate limit exceeded")
+        raise Exception(f"Gemini API error: {str(e)}")

@@ -100,8 +100,20 @@ huggingface_upload/
 *.xlsx
 *.zip
 
+# Notebooks and analysis files (too large for GitHub)
+notebooks/
+*.ipynb
+
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
+
+# Claude Code configuration and documentation
+.claude/
+CLAUDE.md
+
+# Additional large markdown documentation
+Medical_Triage_Article.md
+QUICK_START.md
 
 # Model training outputs
 experiments/

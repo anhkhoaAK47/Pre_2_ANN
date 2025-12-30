@@ -14,7 +14,7 @@ class LLMOutput(BaseModel):
     assistant_message: str = Field(..., description="Câu hiển thị cho người dùng (lịch sự, ngắn gọn)")
     slots_extracted: Dict[str, str] = Field(default_factory=dict)
     missing_slots: List[str] = Field(default_factory=list)
-    next_action: str = Field(..., pattern=r"^(ask_for_missing_slots|call_phobert|final_confirmation|session_complete|off_topic_response|information_recall|information_updated)$")
+    next_action: str = Field(..., pattern=r"^(ask_for_missing_slots|call_phobert|final_confirmation|session_complete|off_topic_response|information_recall|information_updated|active_questioning_response)$")
     is_off_topic: bool = Field(default=False, description="True if this is an off-topic response")
     field_updates: Optional[Dict[str, str]] = Field(default=None, description="Field updates when patient corrects information")
 
@@ -33,10 +33,12 @@ class LLMOutput(BaseModel):
 class ChatIn(BaseModel):
     user_id: str
     message: str
+    mode: Optional[str] = Field(default="disease", pattern=r"^(disease|department)$", description="Questioning mode: 'disease' or 'department'")
 
 class ChatOut(BaseModel):
     assistant_message: str
     filled_slots: Dict[str, str]
     missing_slots: List[str]
     next_action: str
+    mode: Optional[str] = None
     debug: Optional[Dict] = None

@@ -25,6 +25,13 @@ from .active_questioning import (
     QuestioningSession,
     create_disease_symptom_matrix
 )
+from .department_questioning import (
+    DepartmentBasedQuestioningEngine,
+    DepartmentHypothesis,
+    DepartmentQuestion,
+    DepartmentQuestioningSession,
+    QuestioningStrategy
+)
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -97,6 +104,7 @@ class ANNService:
         label_encoder_path: str,
         train_data_path: str,
         confusion_matrix_path: Optional[str] = None,
+        department_map: Optional[Dict[str, str]] = None,
         device: Optional[torch.device] = None
     ):
         """
@@ -107,6 +115,7 @@ class ANNService:
             label_encoder_path: Path to label_encoder.pkl
             train_data_path: Path to train.csv (for symptom names and disease-symptom matrix)
             confusion_matrix_path: Path to confusion matrix data (optional)
+            department_map: Dict mapping disease_name -> department_name (for department-based questioning)
             device: PyTorch device (auto-detected if None)
         """
         self.device = device if device else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -155,7 +164,7 @@ class ANNService:
             logger.info(f"Loading confusion matrix from {confusion_matrix_path}")
             self.confusion_matrix_data = pd.read_csv(confusion_matrix_path)
 
-        # Initialize active questioning engine
+        # Initialize disease-based questioning engine
         self.questioning_engine = ActiveQuestioningEngine(
             symptom_columns=self.symptom_columns,
             confusion_matrix_data=self.confusion_matrix_data,
@@ -164,8 +173,26 @@ class ANNService:
             gap_threshold=0.40
         )
 
+        # Initialize department-based questioning engine (if department map provided)
+        self.dept_questioning_engine = None
+        if department_map:
+            logger.info("Initializing department-based questioning engine...")
+            disease_names = list(self.label_encoder.classes_)
+            self.dept_questioning_engine = DepartmentBasedQuestioningEngine(
+                disease_symptom_matrix=self.disease_symptom_matrix,
+                symptom_names=self.symptom_columns,
+                disease_names=disease_names,
+                department_map=department_map,
+                strategy=QuestioningStrategy.HYBRID,
+                max_questions=10,
+                confidence_threshold=0.85,
+                gap_threshold=0.40
+            )
+            logger.info("✅ Department-based questioning engine initialized")
+
         # Store active sessions
         self.active_sessions: Dict[str, QuestioningSession] = {}
+        self.dept_active_sessions: Dict[str, DepartmentQuestioningSession] = {}
 
         logger.info("ANNService initialization complete")
 
@@ -375,6 +402,7 @@ class ANNService:
         # Re-predict with updated symptoms
         prediction = self.predict_from_symptoms(all_symptoms, top_k=10)
         session.hypotheses = prediction.hypotheses
+        session.final_confidence = session.hypotheses[0].probability if session.hypotheses else 0.0
 
         logger.info(f"Session {session_id}: Q{session.questions_asked} - {symptom_name} = {has_symptom}")
         logger.info(f"Top disease now: {prediction.top_disease} ({prediction.top_confidence*100:.1f}%)")
@@ -387,6 +415,7 @@ class ANNService:
         if not should_continue:
             session.is_complete = True
             session.final_diagnosis = session.hypotheses[0]
+            session.final_confidence = session.final_diagnosis.probability
             logger.info(f"Session {session_id} complete: {reason}")
             return session, None
 
@@ -404,12 +433,117 @@ class ANNService:
         return session, next_question
 
     def get_session(self, session_id: str) -> Optional[QuestioningSession]:
-        """Get questioning session by ID"""
+        """Get disease-based questioning session by ID"""
         return self.active_sessions.get(session_id)
 
     def end_session(self, session_id: str) -> Optional[QuestioningSession]:
-        """End and remove questioning session"""
+        """End and remove disease-based questioning session"""
         return self.active_sessions.pop(session_id, None)
+
+    # ========== DEPARTMENT-BASED QUESTIONING METHODS ==========
+
+    def start_department_questioning_session(
+        self,
+        session_id: str,
+        initial_symptoms: List[str]
+    ) -> Tuple[DepartmentQuestioningSession, Optional[DepartmentQuestion]]:
+        """
+        Start a department-based questioning session.
+
+        Args:
+            session_id: Unique session identifier
+            initial_symptoms: List of initial symptoms
+
+        Returns:
+            Tuple of (session, first_question)
+        """
+        if not self.dept_questioning_engine:
+            raise ValueError("Department questioning engine not initialized (no department map provided)")
+
+        # Get initial prediction
+        prediction = self.predict_from_symptoms(initial_symptoms, top_k=10)
+
+        # Get initial symptom vector
+        initial_symptom_vector = self.create_symptom_vector(initial_symptoms, warn_unknown=False)
+
+        # Start department questioning session
+        session, first_question = self.dept_questioning_engine.start_questioning_session(
+            session_id=session_id,
+            disease_probs=prediction.all_probabilities,
+            initial_symptom_vector=initial_symptom_vector
+        )
+
+        # Store session
+        self.dept_active_sessions[session_id] = session
+
+        logger.info(f"Started department questioning session: {session_id}")
+        if session.current_departments:
+            logger.info(f"Top department: {session.current_departments[0].department_name} "
+                       f"({session.current_departments[0].probability*100:.1f}%)")
+
+        return session, first_question
+
+    def answer_department_question(
+        self,
+        session_id: str,
+        symptom_name: str,
+        has_symptom: bool
+    ) -> Tuple[DepartmentQuestioningSession, Optional[DepartmentQuestion]]:
+        """
+        Process answer to a department-based question and get next question.
+
+        Args:
+            session_id: Session identifier
+            symptom_name: Name of symptom asked about
+            has_symptom: True if user has symptom, False otherwise
+
+        Returns:
+            Tuple of (updated_session, next_question)
+        """
+        if session_id not in self.dept_active_sessions:
+            raise ValueError(f"Department session {session_id} not found")
+
+        if not self.dept_questioning_engine:
+            raise ValueError("Department questioning engine not initialized")
+
+        session = self.dept_active_sessions[session_id]
+
+        # Build current symptom list
+        all_symptoms = []
+        for symptom_idx, symptom_val in enumerate(session.current_symptom_vector):
+            if symptom_val == 1:
+                all_symptoms.append(self.symptom_columns[symptom_idx])
+
+        # Add the answered symptom
+        if has_symptom and symptom_name not in all_symptoms:
+            all_symptoms.append(symptom_name)
+
+        # Re-predict with updated symptoms
+        prediction = self.predict_from_symptoms(all_symptoms, top_k=10)
+
+        # Update department questioning session
+        updated_session, next_question = self.dept_questioning_engine.answer_question(
+            session_id=session_id,
+            symptom_name=symptom_name,
+            has_symptom=has_symptom,
+            disease_probs_updated=prediction.all_probabilities
+        )
+
+        logger.info(f"Department session {session_id}: Q{updated_session.questions_asked} "
+                   f"- {symptom_name} = {has_symptom}")
+        if updated_session.current_departments:
+            logger.info(f"Top department now: {updated_session.current_departments[0].department_name} "
+                       f"({updated_session.current_departments[0].probability*100:.1f}%)")
+
+        return updated_session, next_question
+
+    def get_department_session(self, session_id: str) -> Optional[DepartmentQuestioningSession]:
+        """Get department-based questioning session by ID"""
+        return self.dept_active_sessions.get(session_id)
+
+    def end_department_session(self, session_id: str) -> Optional[DepartmentQuestioningSession]:
+        """End and remove department-based questioning session"""
+        return self.dept_active_sessions.pop(session_id, None)
 
     def get_disease_info(self, disease_name: str) -> Dict:
         """
