@@ -7,7 +7,7 @@ An AI-powered medical diagnosis chatbot using Artificial Neural Networks (ANN) w
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688.svg)](https://fastapi.tiangolo.com/)
 [![Status](https://img.shields.io/badge/Status-Fully%20Working-success.svg)]()
 
-## 🎯 Overview
+## Overview
 
 This system provides intelligent preliminary medical diagnosis for Vietnamese patients with **two questioning modes**:
 
@@ -29,7 +29,7 @@ This system provides intelligent preliminary medical diagnosis for Vietnamese pa
 - **Natural Conversation**: Powered by Google Gemini 2.0 Flash
 - **Full Vietnamese Support**: Language and medical terminology
 
-## 📊 Performance Metrics
+## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
@@ -43,7 +43,7 @@ This system provides intelligent preliminary medical diagnosis for Vietnamese pa
 | **Avg Questions (Department)** | 1-2 questions |
 | **Confidence Gain** | +42-52% average |
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -116,7 +116,7 @@ lsof -ti:8004 | xargs kill -9
 Ctrl + C
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -153,7 +153,7 @@ Ctrl + C
           └──────────────────────┘
 ```
 
-## 🔍 Dual Questioning Modes
+## Dual Questioning Modes
 
 ### Disease-Based Questioning
 
@@ -169,7 +169,7 @@ Input: "đau đầu, sốt cao"
 Initial: 39.3% confidence (ngộ độc khí carbon monoxide)
 Question 1: "Bạn có triệu chứng trầm cảm hoặc loạn thần không?"
 → Answer: "Có"
-Result: 98.9% confidence ✅
+Result: 98.9% confidence 
 Output: ngộ độc khí carbon monoxide → Khám tổng quát
 ```
 
@@ -189,7 +189,7 @@ Question 1: "Bạn có đau bụng dữ dội không?"
 → Answer: "Có"
 Question 2: "Bạn có táo bón không?"
 → Answer: "Có"
-Result: 99.6% confidence ✅
+Result: 99.6% confidence 
 Output: Ngoại tổng quát / Cấp cứu → tắc ruột
 ```
 
@@ -208,7 +208,7 @@ Output: Ngoại tổng quát / Cấp cứu → tắc ruột
 ```
 Pre_2_ANN/
 ├── app_v2/                          # FastAPI Application
-│   ├── main_ann.py                 # ✅ Main entry (FULLY WORKING)
+│   ├── main_ann.py                 # Main entry (FULLY WORKING)
 │   ├── services/
 │   │   ├── ann_service.py          # ANN prediction engine
 │   │   ├── active_questioning.py   # Disease-based questioning
@@ -217,7 +217,7 @@ Pre_2_ANN/
 │   ├── core/                       # Database & state
 │   ├── models/                     # ORM models
 │   └── schemas/
-│       └── chat_schemas.py         # ✅ Updated with active_questioning_response
+│       └── chat_schemas.py         # Updated with active_questioning_response
 │
 ├── building_ANN/                    # Model Training & Research
 │   ├── models/pytorch/
@@ -243,7 +243,7 @@ Pre_2_ANN/
     └── resume.md                   # Project summary
 ```
 
-## 🧠 Model Architecture
+## Model Architecture
 
 **ANN Design** (PyTorch):
 ```
@@ -265,7 +265,7 @@ Output:       128 → 577 diseases + Softmax
 - Early Stopping: Patience = 10
 - Dataset: 147,470 cases → 70/15/15 split
 
-## 📡 API Usage
+## API Usage
 
 ### Chat Endpoint (Main)
 
@@ -303,7 +303,7 @@ response = requests.post("http://localhost:8004/predict_symptoms", json={
 })
 ```
 
-## 🔍 Active Questioning Algorithm
+## Active Questioning Algorithm
 
 **Hybrid Strategy** (combines 3 approaches):
 
@@ -320,12 +320,12 @@ response = requests.post("http://localhost:8004/predict_symptoms", json={
    - Broadens search when top candidates are unclear
 
 **Stopping Criteria:**
-- ✅ Top disease probability > 85%
-- ✅ Gap between #1 and #2 > 40%
-- ✅ 10 questions asked (max)
-- ✅ Information gain < 0.01 (diminishing returns)
+-  Top disease probability > 85%
+-  Gap between #1 and #2 > 40%
+-  10 questions asked (max)
+-  Information gain < 0.01 (diminishing returns)
 
-## 🏥 Department Mapping
+## Department Mapping
 
 **26 Hospital Departments:**
 
@@ -348,11 +348,11 @@ response = requests.post("http://localhost:8004/predict_symptoms", json={
 - Fallback: "Khám tổng quát" (General)
 - Total coverage: 65.7% automatic, 34.3% default
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Test imports
-python3 -c "from app_v2.services.ann_service import ANNService; print('✅ OK')"
+python3 -c "from app_v2.services.ann_service import ANNService; print(' OK')"
 
 # Test API
 curl -X POST http://localhost:8004/chat \
@@ -365,7 +365,7 @@ jupyter notebook
 # Open 06 (department) or 07 (disease) for testing
 ```
 
-## 📊 Database Schema
+## Database Schema
 
 **patient_records:**
 - Patient info: name, phone, age, gender
@@ -384,7 +384,7 @@ jupyter notebook
 - Aggregated statistics
 - Department/disease distributions
 
-## 🛠️ Development
+## Development
 
 ### Training New Models
 
@@ -415,12 +415,12 @@ jupyter notebook
 # 03 - ANN Training (PyTorch)
 # 04 - Model Evaluation
 # 05 - Interactive Testing
-# 06 - Department-Based Questioning ✅
-# 07 - Disease-Based Questioning ✅
+# 06 - Department-Based Questioning 
+# 07 - Disease-Based Questioning 
 # 08 - Comparison Analysis
 ```
 
-## 🔧 Configuration
+## Configuration
 
 **Environment Variables** (.env):
 ```bash
@@ -441,15 +441,8 @@ DEPARTMENT_DEFAULT=Khám tổng quát
 - TRAIN_DATA: `building_ANN/data/processed/common/train.csv`
 - DEPT_MAP: `building_ANN/utils/department_map_577.json`
 
-## 🔒 Security
 
-- ⚠️ Never commit `.env` (contains API keys)
-- ⚠️ Change default database credentials in production
-- ⚠️ Model files (.pth) excluded from git (large size)
-- ✅ CORS configured for localhost development
-- ✅ Input validation via Pydantic schemas
-
-## 🐛 Troubleshooting
+## Troubleshooting
 
 **Import errors:**
 ```bash
@@ -468,48 +461,12 @@ lsof -ti:8004 | xargs kill -9
 cd /path/to/Pre_2_ANN
 python -m uvicorn app_v2.main_ann:app --port 8004
 ```
-
-## 📚 Documentation
-
-- **CLAUDE.md**: Comprehensive guide for AI development
-- **docs/resume.md**: Project summary
-- **notebooks/**: Jupyter notebooks with examples
-- **API Docs**: http://localhost:8004/docs (auto-generated)
-
-## 🎯 Current Status
-
-✅ **Fully Working System** (as of 2025-12-28)
-
-| Component | Status |
-|-----------|--------|
-| Backend API | ✅ Working |
-| Disease Questioning | ✅ Working |
-| Department Questioning | ✅ Working |
-| Gemini Integration | ✅ Working |
-| Database Persistence | ✅ Working |
-| Frontend UI | ✅ Working |
-| Admin Dashboard | ✅ Working |
-
-**Recent Fixes:**
-- Fixed QuestioningSession attributes (initial_confidence, final_confidence, strategy)
-- Added active_questioning_response to schema validation
-- Fixed attribute name mismatches (current_hypotheses → hypotheses)
-- Fixed department mode symptom vector handling
-- Session state properly maintained across requests
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/NewFeature`)
-3. Commit changes (`git commit -m 'Add NewFeature'`)
-4. Push to branch (`git push origin feature/NewFeature`)
+it push origin feature/NewFeature`)
 5. Open Pull Request
 
-## 📝 License
+.
 
-This project is licensed under the MIT License.
-
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **Dataset**: Vietnamese medical diagnosis dataset (147,470 patient cases)
 - **AI Models**: PyTorch, Google Gemini 2.0 Flash
