@@ -163,9 +163,11 @@ try:
         label_encoder_path=LABEL_ENCODER_PATH,
         train_data_path=TRAIN_DATA_PATH,
         confusion_matrix_path=CONFUSION_MATRIX_PATH if os.path.exists(CONFUSION_MATRIX_PATH) else None,
+        department_map=DEPT_MAP,  # Enable department-based questioning
         device=DEVICE
     )
     logger.info("✅ ANN Service initialized successfully")
+    logger.info("✅ Department-based questioning enabled")
 except Exception as e:
     logger.error(f"❌ Failed to initialize ANN Service: {e}")
     raise
@@ -259,12 +261,16 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
     Main conversational endpoint with ANN and active questioning:
     - Collects patient information through Gemini dialogue
     - Uses ANN model for disease prediction
-    - Implements active questioning for ambiguous cases
+    - Implements active questioning for ambiguous cases (disease or department mode)
     - Provides department recommendations
     - Saves consultations to database
+
+    Query Parameters:
+    - mode: 'disease' (default) or 'department' - controls questioning approach
     """
     user_id = body.user_id
     message = body.message
+    mode = body.mode or "disease"  # Default to disease-based
 
     try:
         # 1) Get current slots
@@ -331,47 +337,87 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
                 prediction = ann_service.predict_from_symptoms(symptom_list, top_k=10)
                 dept = recommend_department(prediction.top_disease)
 
-                # Check if we need active questioning
+                # Check if we need active questioning (MODE-DEPENDENT)
                 if prediction.needs_questioning and prediction.confidence_category != "HIGH":
-                    # Start active questioning session
-                    session_id = f"aq_{user_id}_{uuid.uuid4().hex[:8]}"
-                    session, first_question = ann_service.start_questioning_session(
-                        session_id=session_id,
-                        initial_symptoms=symptom_list
-                    )
-
-                    if first_question:
-                        # Store session ID in user's state (you'd need to implement this)
-                        assist_msg = (
-                            f"🔍 **Đang phân tích triệu chứng...**\n\n"
-                            f"📊 Độ tin cậy hiện tại: {prediction.top_confidence*100:.1f}%\n"
-                            f"🎯 Bệnh có khả năng: {', '.join([d for d, _ in prediction.top_k_predictions[:3]])}\n\n"
-                            f"❓ **Câu hỏi {session.questions_asked + 1}/{session.max_questions}:**\n"
-                            f"{first_question.question_text}\n\n"
-                            f"💡 *{first_question.reason}*\n\n"
-                            f"Vui lòng trả lời: **Có** hoặc **Không**"
+                    # Start questioning session based on mode
+                    if mode == "department":
+                        # DEPARTMENT-BASED questioning
+                        session_id = f"dept_aq_{user_id}_{uuid.uuid4().hex[:8]}"
+                        session, first_question = ann_service.start_department_questioning_session(
+                            session_id=session_id,
+                            initial_symptoms=symptom_list
                         )
-                        next_action = "active_questioning"
 
-                        # Save session reference (simplified - you'd store this properly)
-                        filled["_active_session_id"] = session_id
-                        filled["_current_question_symptom"] = first_question.symptom_name
+                        if first_question:
+                            # Get top departments for display
+                            top_depts = [h.department_name for h in session.current_departments[:3]]
 
-                    else:
-                        # No good question found, proceed with current prediction
-                        assist_msg = _format_diagnosis_result(prediction, dept)
-                        next_action = "final_confirmation"
-                        _update_patient_record(db, user_id, filled, missing, prediction, dept)
+                            # Store session ID in user's state
+                            assist_msg = (
+                                f"🔍 **Đang phân tích triệu chứng...**\n\n"
+                                f"📊 Độ tin cậy hiện tại: {session.initial_confidence*100:.1f}%\n"
+                                f"🏥 **Khoa có khả năng:** {', '.join(top_depts)}\n\n"
+                                f"❓ **Câu hỏi {session.questions_asked + 1}/{session.max_questions}:**\n"
+                                f"{first_question.question_text}\n\n"
+                                f"💡 *{first_question.reason}*\n\n"
+                                f"Vui lòng trả lời: **Có** hoặc **Không**"
+                            )
+                            next_action = "active_questioning_department"
+
+                            # Save session reference
+                            filled["_active_session_id"] = session_id
+                            filled["_current_question_symptom"] = first_question.symptom_name
+                            filled["_questioning_mode"] = "department"
+                        else:
+                            # No good question found, proceed with current prediction
+                            assist_msg = _format_diagnosis_result(prediction, dept)
+                            next_action = "final_confirmation"
+                            _update_patient_record(db, user_id, filled, missing, prediction, dept)
+
+                    else:  # mode == "disease"
+                        # DISEASE-BASED questioning
+                        session_id = f"aq_{user_id}_{uuid.uuid4().hex[:8]}"
+                        session, first_question = ann_service.start_questioning_session(
+                            session_id=session_id,
+                            initial_symptoms=symptom_list
+                        )
+
+                        if first_question:
+                            # Get top diseases for display
+                            top_diseases = [h.disease_name for h in session.current_hypotheses[:3]]
+
+                            # Store session ID in user's state
+                            assist_msg = (
+                                f"🔍 **Đang phân tích triệu chứng...**\n\n"
+                                f"📊 Độ tin cậy hiện tại: {session.initial_confidence*100:.1f}%\n"
+                                f"🩺 **Bệnh có khả năng:** {', '.join(top_diseases)}\n\n"
+                                f"❓ **Câu hỏi {session.questions_asked + 1}/{session.max_questions}:**\n"
+                                f"{first_question.question_text}\n\n"
+                                f"💡 *{first_question.reason}*\n\n"
+                                f"Vui lòng trả lời: **Có** hoặc **Không**"
+                            )
+                            next_action = "active_questioning_disease"
+
+                            # Save session reference
+                            filled["_active_session_id"] = session_id
+                            filled["_current_question_symptom"] = first_question.symptom_name
+                            filled["_questioning_mode"] = "disease"
+                        else:
+                            # No good question found, proceed with current prediction
+                            assist_msg = _format_diagnosis_result(prediction, dept)
+                            next_action = "final_confirmation"
+                            _update_patient_record(db, user_id, filled, missing, prediction, dept)
                 else:
                     # High confidence, no questioning needed
                     assist_msg = _format_diagnosis_result(prediction, dept)
                     next_action = "final_confirmation"
                     _update_patient_record(db, user_id, filled, missing, prediction, dept)
 
-        # 9) Handle active questioning responses
+        # 9) Handle active questioning responses (MODE-DEPENDENT)
         elif parsed.next_action == "active_questioning_response":
             session_id = filled.get("_active_session_id")
             current_symptom = filled.get("_current_question_symptom")
+            questioning_mode = filled.get("_questioning_mode", "disease")  # Default to disease
 
             if not session_id or not current_symptom:
                 assist_msg = "Xin lỗi, có lỗi trong quá trình đặt câu hỏi. Vui lòng thử lại."
@@ -382,57 +428,120 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
 
                 if has_symptom is None:
                     assist_msg = "Xin vui lòng trả lời **Có** hoặc **Không** cho câu hỏi trước."
-                    next_action = "active_questioning"
+                    next_action = f"active_questioning_{questioning_mode}"
                 else:
-                    # Process answer
-                    session, next_question = ann_service.answer_question(
-                        session_id=session_id,
-                        symptom_name=current_symptom,
-                        has_symptom=has_symptom
-                    )
-
-                    if session.is_complete or not next_question:
-                        # Questioning complete
-                        final_disease = session.final_diagnosis
-                        dept = recommend_department(final_disease.disease_name)
-
-                        assist_msg = (
-                            f"✅ **Phân tích hoàn tất!**\n\n"
-                            f"🩺 **Kết quả chẩn đoán:**\n"
-                            f"• Bệnh dự đoán: **{final_disease.disease_name}**\n"
-                            f"• Độ tin cậy: **{final_disease.probability*100:.1f}%**\n"
-                            f"• Khoa khám gợi ý: **{dept}**\n\n"
-                            f"📊 Số câu hỏi đã hỏi: {session.questions_asked}/{session.max_questions}\n\n"
-                            f"📋 Bạn có thể in hồ sơ tư vấn để mang đến bệnh viện.\n\n"
-                            f"❓ Bạn có muốn hỏi thêm điều gì khác không? Nếu không, hãy nhập 'kết thúc' để hoàn tất."
+                    if questioning_mode == "department":
+                        # Process answer using DEPARTMENT-BASED questioning
+                        session, next_question = ann_service.answer_department_question(
+                            session_id=session_id,
+                            symptom_name=current_symptom,
+                            has_symptom=has_symptom
                         )
-                        next_action = "final_confirmation"
 
-                        # Save to database
-                        prediction = ann_service.predict_from_symptoms(
-                            list(session.asked_symptoms), top_k=10
+                        if session.is_complete or not next_question:
+                            # Questioning complete - show department result
+                            final_department = session.final_department
+
+                            # Get top disease from final department's contributing diseases
+                            top_disease_name = final_department.contributing_diseases[0][0]
+                            top_disease_prob = final_department.contributing_diseases[0][1]
+
+                            assist_msg = (
+                                f"✅ **Phân tích hoàn tất!**\n\n"
+                                f"🏥 **Kết quả khám:**\n"
+                                f"• Khoa khám gợi ý: **{final_department.department_name}**\n"
+                                f"• Độ tin cậy khoa: **{final_department.probability*100:.1f}%**\n"
+                                f"• Bệnh có khả năng cao nhất: **{top_disease_name}** ({top_disease_prob*100:.1f}%)\n\n"
+                                f"📊 Số câu hỏi đã hỏi: {session.questions_asked}/{session.max_questions}\n\n"
+                                f"📋 Bạn có thể in hồ sơ tư vấn để mang đến bệnh viện.\n\n"
+                                f"❓ Bạn có muốn hỏi thêm điều gì khác không? Nếu không, hãy nhập 'kết thúc' để hoàn tất."
+                            )
+                            next_action = "final_confirmation"
+
+                            # Save to database - build symptom list from vector
+                            all_symptoms = []
+                            for symptom_idx, symptom_val in enumerate(session.current_symptom_vector):
+                                if symptom_val == 1:
+                                    all_symptoms.append(ann_service.symptom_columns[symptom_idx])
+
+                            prediction = ann_service.predict_from_symptoms(all_symptoms, top_k=10)
+                            _update_patient_record(db, user_id, filled, missing, prediction, final_department.department_name)
+
+                            # Clean up session
+                            filled.pop("_active_session_id", None)
+                            filled.pop("_current_question_symptom", None)
+                            filled.pop("_questioning_mode", None)
+
+                        else:
+                            # Continue questioning - show DEPARTMENT progress
+                            current_top_dept = session.current_departments[0]
+                            assist_msg = (
+                                f"📊 **Cập nhật phân tích:**\n"
+                                f"• Khoa có khả năng cao nhất: **{current_top_dept.department_name}** ({current_top_dept.probability*100:.1f}%)\n\n"
+                                f"❓ **Câu hỏi {session.questions_asked + 1}/{session.max_questions}:**\n"
+                                f"{next_question.question_text}\n\n"
+                                f"💡 *{next_question.reason}*\n\n"
+                                f"Vui lòng trả lời: **Có** hoặc **Không**"
+                            )
+                            next_action = "active_questioning_department"
+
+                            # Update current question
+                            filled["_current_question_symptom"] = next_question.symptom_name
+
+                    else:  # questioning_mode == "disease"
+                        # Process answer using DISEASE-BASED questioning
+                        session, next_question = ann_service.answer_question(
+                            session_id=session_id,
+                            symptom_name=current_symptom,
+                            has_symptom=has_symptom
                         )
-                        _update_patient_record(db, user_id, filled, missing, prediction, dept)
 
-                        # Clean up session
-                        filled.pop("_active_session_id", None)
-                        filled.pop("_current_question_symptom", None)
+                        if session.is_complete or not next_question:
+                            # Questioning complete - show disease result
+                            final_disease = session.final_hypothesis
+                            dept = recommend_department(final_disease.disease_name)
 
-                    else:
-                        # Continue questioning
-                        current_top = session.hypotheses[0]
-                        assist_msg = (
-                            f"📊 **Cập nhật phân tích:**\n"
-                            f"• Bệnh có khả năng cao nhất: {current_top.disease_name} ({current_top.probability*100:.1f}%)\n\n"
-                            f"❓ **Câu hỏi {session.questions_asked + 1}/{session.max_questions}:**\n"
-                            f"{next_question.question_text}\n\n"
-                            f"💡 *{next_question.reason}*\n\n"
-                            f"Vui lòng trả lời: **Có** hoặc **Không**"
-                        )
-                        next_action = "active_questioning"
+                            assist_msg = (
+                                f"✅ **Phân tích hoàn tất!**\n\n"
+                                f"🩺 **Kết quả khám:**\n"
+                                f"• Bệnh có khả năng: **{final_disease.disease_name}**\n"
+                                f"• Độ tin cậy: **{final_disease.probability*100:.1f}%**\n"
+                                f"• Khoa khám gợi ý: **{dept}**\n\n"
+                                f"📊 Số câu hỏi đã hỏi: {session.questions_asked}/{session.max_questions}\n\n"
+                                f"📋 Bạn có thể in hồ sơ tư vấn để mang đến bệnh viện.\n\n"
+                                f"❓ Bạn có muốn hỏi thêm điều gì khác không? Nếu không, hãy nhập 'kết thúc' để hoàn tất."
+                            )
+                            next_action = "final_confirmation"
 
-                        # Update current question
-                        filled["_current_question_symptom"] = next_question.symptom_name
+                            # Save to database - build symptom list from vector
+                            all_symptoms = []
+                            for symptom_idx, symptom_val in enumerate(session.current_symptom_vector):
+                                if symptom_val == 1:
+                                    all_symptoms.append(ann_service.symptom_columns[symptom_idx])
+
+                            prediction = ann_service.predict_from_symptoms(all_symptoms, top_k=10)
+                            _update_patient_record(db, user_id, filled, missing, prediction, dept)
+
+                            # Clean up session
+                            filled.pop("_active_session_id", None)
+                            filled.pop("_current_question_symptom", None)
+                            filled.pop("_questioning_mode", None)
+
+                        else:
+                            # Continue questioning - show DISEASE progress
+                            current_top_disease = session.current_hypotheses[0]
+                            assist_msg = (
+                                f"📊 **Cập nhật phân tích:**\n"
+                                f"• Bệnh có khả năng cao nhất: **{current_top_disease.disease_name}** ({current_top_disease.probability*100:.1f}%)\n\n"
+                                f"❓ **Câu hỏi {session.questions_asked + 1}/{session.max_questions}:**\n"
+                                f"{next_question.question_text}\n\n"
+                                f"💡 *{next_question.reason}*\n\n"
+                                f"Vui lòng trả lời: **Có** hoặc **Không**"
+                            )
+                            next_action = "active_questioning_disease"
+
+                            # Update current question
+                            filled["_current_question_symptom"] = next_question.symptom_name
 
         # 10) Session complete
         elif parsed.next_action == "session_complete" or message.lower().strip() in [
@@ -457,11 +566,13 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
             filled_slots=filled,
             missing_slots=missing,
             next_action=next_action,
+            mode=mode,
             debug={
                 "llm_next_action": parsed.next_action,
                 "off_topic_count": get_off_topic_count(user_id),
                 "is_off_topic": parsed.is_off_topic,
-                "model_version": "ANN_v2"
+                "model_version": "ANN_v2",
+                "questioning_mode": mode
             }
         )
 
@@ -472,6 +583,7 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
             filled_slots=get_slots(user_id),
             missing_slots=[],
             next_action="error",
+            mode=mode if 'mode' in locals() else "disease",
             debug={"error": str(e)}
         )
 

@@ -33,10 +33,12 @@ class LLMOutput(BaseModel):
 class ChatIn(BaseModel):
     user_id: str
     message: str
+    mode: Optional[str] = Field(default="disease", pattern=r"^(disease|department)$", description="Questioning mode: 'disease' or 'department'")
 
 class ChatOut(BaseModel):
     assistant_message: str
     filled_slots: Dict[str, str]
     missing_slots: List[str]
     next_action: str
+    mode: Optional[str] = None
     debug: Optional[Dict] = None

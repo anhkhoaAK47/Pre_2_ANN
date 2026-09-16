@@ -103,8 +103,24 @@ class ActiveQuestioningEngine:
         self.symptom_to_idx = {symptom: idx for idx, symptom in enumerate(symptom_columns)}
         self.idx_to_symptom = {idx: symptom for symptom, idx in self.symptom_to_idx.items()}
 
+        # Load question cache
+        self.question_cache = self._load_question_cache()
+
+        # Load Gemini configuration from environment
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+
+        self.enable_gemini = os.getenv("ENABLE_GEMINI_QUESTIONS", "False").lower() == "true"
+        self.max_gemini_questions = int(os.getenv("MAX_GEMINI_QUESTIONS", "3"))
+        self.gemini_timeout = float(os.getenv("GEMINI_QUESTION_TIMEOUT", "2.0"))
+
         logger.info(f"ActiveQuestioningEngine initialized with {self.num_symptoms} symptoms")
         logger.info(f"Strategy: {strategy.value}, Max questions: {max_questions}")
+        if self.question_cache:
+            logger.info(f"Loaded question cache with {len(self.question_cache)} symptoms")
+        logger.info(f"Gemini questions: {'Enabled' if self.enable_gemini else 'Disabled'} "
+                   f"(max: {self.max_gemini_questions}, timeout: {self.gemini_timeout}s)")
 
     def should_continue_questioning(
         self,
@@ -279,8 +295,9 @@ class ActiveQuestioningEngine:
 
         # Get current probability distribution
         sorted_hyp = sorted(hypotheses, key=lambda h: h.probability, reverse=True)
-        current_probs = np.array([h.probability for h in sorted_hyp])
-        disease_ids = [h.disease_id for h in sorted_hyp]
+
+        # Extract top disease names for context
+        top_disease_names = [h.disease_name for h in sorted_hyp[:3]]
 
         # Create probability vector for all diseases
         full_probs = np.zeros(disease_symptom_matrix.shape[0])
@@ -289,7 +306,6 @@ class ActiveQuestioningEngine:
 
         best_question = None
         best_score = -1
-        strategy_used = self.strategy
 
         # Strategy 1: Differential Diagnosis (for top 2 diseases)
         if self.strategy in [QuestioningStrategy.DIFFERENTIAL, QuestioningStrategy.HYBRID]:
@@ -309,7 +325,10 @@ class ActiveQuestioningEngine:
                         best_question = Question(
                             symptom_name=symptom_name,
                             symptom_id=symptom_idx,
-                            question_text=self._create_question_text(symptom_name),
+                            question_text=self._create_question_text(
+                                symptom_name,
+                                top_diseases=top_disease_names
+                            ),
                             reason="Để phân biệt giữa các bệnh có khả năng cao",
                             information_gain=disc_power,
                             strategy_used=QuestioningStrategy.DIFFERENTIAL
@@ -343,7 +362,10 @@ class ActiveQuestioningEngine:
                 best_question = Question(
                     symptom_name=symptom_name,
                     symptom_id=symptom_idx,
-                    question_text=self._create_question_text(symptom_name),
+                    question_text=self._create_question_text(
+                        symptom_name,
+                        top_diseases=top_disease_names
+                    ),
                     reason="Để thu thập thêm thông tin về các triệu chứng",
                     information_gain=info_gain,
                     strategy_used=QuestioningStrategy.INFORMATION_GAIN
@@ -358,18 +380,103 @@ class ActiveQuestioningEngine:
 
         return best_question
 
-    def _create_question_text(self, symptom_name: str) -> str:
+    def _create_question_text(
+        self,
+        symptom_name: str,
+        question_number: int = 1,
+        top_diseases: List[str] = None
+    ) -> str:
         """
         Create natural language question from symptom name.
+        Strategy: Gemini (if enabled) → Cache → Templates
 
         Args:
             symptom_name: Vietnamese symptom name
+            question_number: Question number in session (for Gemini context)
+            top_diseases: Top disease names (for Gemini context)
 
         Returns:
             Natural language question
         """
-        # Common question templates
-        return f"Bạn có bị {symptom_name} không?"
+        import random
+
+        # Strategy 1: Try Gemini (if enabled and within limit)
+        if self.enable_gemini and question_number <= self.max_gemini_questions:
+            try:
+                from app_v2.services.gemini_service import generate_diverse_question
+                question = generate_diverse_question(
+                    symptom_name=symptom_name,
+                    question_number=question_number,
+                    top_diseases=top_diseases,
+                    timeout=self.gemini_timeout
+                )
+                logger.debug(f"Generated Gemini question for '{symptom_name}': {question}")
+                return question
+            except Exception as e:
+                logger.warning(f"Gemini question generation failed for '{symptom_name}': {e}, "
+                             f"falling back to cache/template")
+
+        # Strategy 2: Try cache
+        if self.question_cache and symptom_name in self.question_cache:
+            return random.choice(self.question_cache[symptom_name])
+
+        # Strategy 3: Fallback templates
+        templates = [
+            f"Bạn có bị {symptom_name} không?",
+            f"Bạn có cảm thấy {symptom_name} không?",
+            f"Gần đây bạn có bị {symptom_name} không?",
+            f"Hiện tại bạn có {symptom_name} không?",
+            f"Bạn đang bị {symptom_name} phải không?",
+            f"Cho tôi hỏi, bạn có {symptom_name} không?",
+            f"Bạn có triệu chứng {symptom_name} không?"
+        ]
+
+        return random.choice(templates)
+
+    def _load_question_cache(self) -> Dict[str, List[str]]:
+        """
+        Load question cache from JSON file.
+
+        Returns:
+            Dictionary mapping symptom names to lists of question variations
+        """
+        import json
+        import os
+
+        try:
+            # Get path relative to this file
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            cache_path = os.path.join(current_dir, "..", "data", "question_cache.json")
+            cache_path = os.path.normpath(cache_path)
+
+            if not os.path.exists(cache_path):
+                logger.warning(f"Question cache not found at {cache_path}")
+                return {}
+
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Extract questions from both system and user sections
+            cache = {}
+
+            # Load system generated questions
+            if "SYSTEM_GENERATED_QUESTIONS" in data:
+                cache.update(data["SYSTEM_GENERATED_QUESTIONS"])
+
+            # Load user custom questions (skip entries starting with _)
+            if "USER_CUSTOM_QUESTIONS" in data:
+                user_questions = data["USER_CUSTOM_QUESTIONS"]
+                for key, value in user_questions.items():
+                    # Skip instruction entries (start with _)
+                    if not key.startswith("_") and isinstance(value, list):
+                        cache[key] = value
+
+            logger.info(f"Successfully loaded question cache from {cache_path}")
+            return cache
+
+        except Exception as e:
+            logger.error(f"Failed to load question cache: {e}")
+            return {}
 
     def update_probabilities(
         self,
