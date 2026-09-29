@@ -288,6 +288,15 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
         else:
             filled = merge_slots(user_id, parsed.slots_extracted)
 
+        # Active-question answers must be routed to the existing session before
+        # the normal slot-filling action can start a new prediction session.
+        if (
+            filled.get("_active_session_id")
+            and filled.get("_current_question_symptom")
+            and _parse_yes_no(message) is not None
+        ):
+            parsed.next_action = "active_questioning_response"
+
         # 4) Calculate missing slots
         missing = [s for s in REQUIRED_SLOTS if not filled.get(s)]
 
@@ -384,12 +393,12 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
 
                         if first_question:
                             # Get top diseases for display
-                            top_diseases = [h.disease_name for h in session.current_hypotheses[:3]]
+                            top_diseases = [h.disease_name for h in session.hypotheses[:3]]
 
                             # Store session ID in user's state
                             assist_msg = (
                                 f"🔍 **Đang phân tích triệu chứng...**\n\n"
-                                f"📊 Độ tin cậy hiện tại: {session.initial_confidence*100:.1f}%\n"
+                                f"📊 Độ tin cậy hiện tại: {(session.hypotheses[0].probability)*100:.1f}%\n"
                                 f"🩺 **Bệnh có khả năng:** {', '.join(top_diseases)}\n\n"
                                 f"❓ **Câu hỏi {session.questions_asked + 1}/{session.max_questions}:**\n"
                                 f"{first_question.question_text}\n\n"
@@ -498,7 +507,7 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
 
                         if session.is_complete or not next_question:
                             # Questioning complete - show disease result
-                            final_disease = session.final_hypothesis
+                            final_disease = session.final_diagnosis
                             dept = recommend_department(final_disease.disease_name)
 
                             assist_msg = (
@@ -513,11 +522,11 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
                             )
                             next_action = "final_confirmation"
 
-                            # Save to database - build symptom list from vector
-                            all_symptoms = []
-                            for symptom_idx, symptom_val in enumerate(session.current_symptom_vector):
-                                if symptom_val == 1:
-                                    all_symptoms.append(ann_service.symptom_columns[symptom_idx])
+                            # Disease sessions store answers by symptom name, not as a vector.
+                            all_symptoms = list(session.initial_symptoms)
+                            for symptom, present in session.symptom_responses.items():
+                                if present and symptom not in all_symptoms:
+                                    all_symptoms.append(symptom)
 
                             prediction = ann_service.predict_from_symptoms(all_symptoms, top_k=10)
                             _update_patient_record(db, user_id, filled, missing, prediction, dept)
@@ -529,7 +538,7 @@ def chat(body: ChatIn, db: Session = Depends(get_db)):
 
                         else:
                             # Continue questioning - show DISEASE progress
-                            current_top_disease = session.current_hypotheses[0]
+                            current_top_disease = session.hypotheses[0]
                             assist_msg = (
                                 f"📊 **Cập nhật phân tích:**\n"
                                 f"• Bệnh có khả năng cao nhất: **{current_top_disease.disease_name}** ({current_top_disease.probability*100:.1f}%)\n\n"
